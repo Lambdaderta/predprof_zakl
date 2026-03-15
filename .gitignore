@@ -205,3 +205,19 @@ cython_debug/
 marimo/_static/
 marimo/_lsp/
 __marimo__/
+
+# Local project files
+.DS_Store
+.pycache_local/
+
+data/raw/
+data/interim/
+data/processed/
+artifacts/
+checkpoints/
+case_web/runtime/
+case_web/artifacts/tiny_cnn_model.h5
+data/Data.npz
+data/extracted_audio/
+Answers_reduced.zip
+tiny_cnn_model.h5

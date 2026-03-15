@@ -1,0 +1,43 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="header">
+    <h3>Панель Администратора</h3>
+    <div class="user-info">
+        <span>{{ session.first_name }} {{ session.last_name }}</span>
+        <a href="{{ url_for('logout') }}"><button class="logout-btn">Выйти</button></a>
+    </div>
+</div>
+
+<div class="form-container">
+    <div class="card">
+        <h3>Создание пользователя</h3>
+        {% if error %}<div class="alert alert-error">{{ error }}</div>{% endif %}
+        {% if success %}<div class="alert alert-success">{{ success }}</div>{% endif %}
+
+        <form method="POST">
+            <label>Имя</label>
+            <input type="text" name="first_name" placeholder="Введите имя" required>
+            <label>Фамилия</label>
+            <input type="text" name="last_name" placeholder="Введите фамилию" required>
+            <label>Логин</label>
+            <input type="text" name="username" placeholder="Введите логин" required>
+            <label>Пароль</label>
+            <input type="password" name="password" placeholder="Введите пароль" required>
+            <label>Роль</label>
+            <select name="role">
+                <option value="user">Пользователь</option>
+                <option value="admin">Администратор</option>
+            </select>
+            <button type="submit" style="margin-top: 25px;">Создать пользователя</button>
+        </form>
+    </div>
+
+    <div class="card">
+        <h3>Сервисные действия</h3>
+        <p class="muted-text">Для защиты можно скачать SQL-дамп текущей базы пользователей.</p>
+        <div class="link-row">
+            <a class="link-chip" href="{{ url_for('download_db_dump') }}">Скачать дамп БД</a>
+        </div>
+    </div>
+</div>
+{% endblock %}

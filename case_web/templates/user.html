@@ -1,0 +1,385 @@
+{% extends "base.html" %}
+{% block content %}
+<script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
+
+<div class="header">
+    <h3>Аналитический Центр</h3>
+    <div class="user-info">
+        <span>{{ session.first_name }} {{ session.last_name }}</span>
+        <a href="{{ url_for('logout') }}"><button class="logout-btn">Выйти</button></a>
+    </div>
+</div>
+
+<div class="card">
+    <h3>Загрузка тестового набора</h3>
+    <p class="muted-text">
+        Загрузите `.npz` с массивами `test_x` и `test_y`. Если жюри выдаст парольный архив `Answers_reduced.zip`,
+        сначала распакуйте его паролем и загрузите файл `Answers_reduced.npz`.
+    </p>
+    <form id="uploadForm" class="upload-form" enctype="multipart/form-data">
+        <div>
+            <label>Файл для проверки модели</label>
+            <input type="file" name="file" accept=".npz" required>
+        </div>
+        <button type="submit">Загрузить и проверить</button>
+    </form>
+    <div id="upload-message" style="margin-top: 16px;"></div>
+</div>
+
+<div class="card">
+    <h3>Состояние модели</h3>
+    <div id="status-box" class="muted-text">Загружаю аналитику...</div>
+</div>
+
+<div id="analytics-section" class="section-hidden">
+    <div class="card">
+        <div class="info-grid">
+            <div class="stat-item">
+                <h4>Классов</h4>
+                <h2 id="model-classes">0</h2>
+            </div>
+            <div class="stat-item">
+                <h4>Val Accuracy</h4>
+                <h2 class="stat-accuracy" id="val-acc">-</h2>
+            </div>
+            <div class="stat-item">
+                <h4>Val Loss</h4>
+                <h2 class="stat-loss" id="val-loss">-</h2>
+            </div>
+            <div class="stat-item">
+                <h4>Test Accuracy</h4>
+                <h2 class="stat-accuracy" id="test-acc">-</h2>
+            </div>
+            <div class="stat-item">
+                <h4>Test Loss</h4>
+                <h2 class="stat-loss" id="test-loss">-</h2>
+            </div>
+            <div class="stat-item">
+                <h4>Файлов в тесте</h4>
+                <h2 id="test-count">0</h2>
+            </div>
+        </div>
+    </div>
+
+    <div class="grid">
+        <div class="card">
+            <h4>Accuracy по эпохам</h4>
+            <div id="chart-accuracy" class="plot-frame"></div>
+        </div>
+        <div class="card">
+            <h4>Loss по эпохам</h4>
+            <div id="chart-loss" class="plot-frame"></div>
+        </div>
+        <div class="card">
+            <h4>Распределение train-классов</h4>
+            <div id="chart-classes" class="plot-frame"></div>
+        </div>
+        <div class="card">
+            <h4>Топ-5 validation-классов</h4>
+            <div id="chart-top5" class="plot-frame"></div>
+        </div>
+        <div class="card">
+            <h4>Confidence по test-записям</h4>
+            <div id="chart-test-confidence" class="plot-frame"></div>
+        </div>
+        <div class="card">
+            <h4>Готовые HTML-графики</h4>
+            <div id="plot-links" class="link-row"></div>
+        </div>
+    </div>
+
+    <div class="card">
+        <h4>Последние предсказания</h4>
+        <div id="download-links" class="link-row"></div>
+        <div class="table-wrap" style="margin-top: 18px;">
+            <table class="data-table">
+                <thead>
+                    <tr>
+                        <th>Запись</th>
+                        <th>Pred ID</th>
+                        <th>Pred Label</th>
+                        <th>Confidence</th>
+                        <th>True ID</th>
+                        <th>True Label</th>
+                        <th>Correct</th>
+                    </tr>
+                </thead>
+                <tbody id="predictions-table"></tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<script>
+    const themeColor = '#00BCD4';
+    const bgColor = '#000066';
+    const gridColor = '#1DAAE6';
+
+    function metric(value) {
+        if (value === null || value === undefined || value === '') {
+            return '-';
+        }
+        const num = Number(value);
+        return Number.isFinite(num) ? num.toFixed(4) : String(value);
+    }
+
+    function safeArray(value) {
+        return Array.isArray(value) ? value : [];
+    }
+
+    function plotLayout(title, xaxisTitle, yaxisTitle) {
+        return {
+            title: {
+                text: title,
+                y: 0.95,
+                x: 0.5,
+                xanchor: 'center',
+                yanchor: 'top',
+                font: {size: 24, family: 'Arial Black', color: themeColor}
+            },
+            xaxis: {
+                title: xaxisTitle,
+                showgrid: false,
+                gridcolor: gridColor,
+                linecolor: themeColor,
+                tickfont: {size: 10, color: themeColor},
+                titlefont: {color: themeColor}
+            },
+            yaxis: {
+                title: yaxisTitle,
+                showgrid: true,
+                gridcolor: gridColor,
+                linecolor: themeColor,
+                tickfont: {color: themeColor},
+                titlefont: {color: themeColor}
+            },
+            paper_bgcolor: bgColor,
+            plot_bgcolor: bgColor,
+            hovermode: 'x',
+            bargap: 0.1,
+            height: 380,
+            margin: {l: 60, r: 25, t: 75, b: 60},
+            font: {family: 'Roboto, sans-serif', size: 14, color: themeColor},
+            legend: {font: {color: themeColor}}
+        };
+    }
+
+    function renderEmptyChart(containerId, title, message) {
+        Plotly.newPlot(containerId, [{
+            x: [0],
+            y: [0],
+            type: 'scatter',
+            mode: 'markers',
+            marker: {size: 0, color: 'rgba(0,0,0,0)'},
+            hoverinfo: 'skip'
+        }], {
+            ...plotLayout(title, '', ''),
+            annotations: [{
+                text: message,
+                x: 0.5,
+                y: 0.5,
+                xref: 'paper',
+                yref: 'paper',
+                showarrow: false,
+                font: {size: 16, color: '#B2EBF2'}
+            }],
+            xaxis: {visible: false},
+            yaxis: {visible: false}
+        }, {displaylogo: false, responsive: true});
+    }
+
+    function renderTrainingCharts(training) {
+        const epochs = safeArray(training.epochs);
+        const trainAcc = safeArray(training.train_accuracy_curve);
+        const valAcc = safeArray(training.val_accuracy_curve);
+        const trainLoss = safeArray(training.train_loss_curve);
+        const valLoss = safeArray(training.val_loss_curve);
+
+        if (epochs.length && (trainAcc.length || valAcc.length)) {
+            Plotly.newPlot('chart-accuracy', [
+                {x: epochs, y: trainAcc, type: 'scatter', mode: 'lines+markers', name: 'Train Accuracy', line: {color: '#00E5FF', width: 3}},
+                {x: epochs, y: valAcc, type: 'scatter', mode: 'lines+markers', name: 'Val Accuracy', line: {color: '#B2EBF2', width: 3}}
+            ], plotLayout('Accuracy по эпохам', 'Эпоха', 'Accuracy'), {displaylogo: false, responsive: true});
+        } else {
+            renderEmptyChart('chart-accuracy', 'Accuracy по эпохам', 'Кривая обучения пока не сохранена');
+        }
+
+        if (epochs.length && (trainLoss.length || valLoss.length)) {
+            Plotly.newPlot('chart-loss', [
+                {x: epochs, y: trainLoss, type: 'scatter', mode: 'lines+markers', name: 'Train Loss', line: {color: '#26C6DA', width: 3}},
+                {x: epochs, y: valLoss, type: 'scatter', mode: 'lines+markers', name: 'Val Loss', line: {color: '#80DEEA', width: 3}}
+            ], plotLayout('Loss по эпохам', 'Эпоха', 'Loss'), {displaylogo: false, responsive: true});
+        } else {
+            renderEmptyChart('chart-loss', 'Loss по эпохам', 'Логи обучения пока не сохранены');
+        }
+    }
+
+    function renderClassCharts(training, testData) {
+        const trainCounts = training.train_class_counts || {};
+        const classIds = Object.keys(trainCounts).map(Number).sort((a, b) => a - b);
+        const classValues = classIds.map(id => trainCounts[id]);
+
+        if (classIds.length) {
+            Plotly.newPlot('chart-classes', [{
+                x: classIds,
+                y: classValues,
+                type: 'bar',
+                marker: {color: themeColor, opacity: 0.85},
+                hovertemplate: '<b>ID:</b> %{x}<br><b>Записей:</b> %{y}<extra></extra>'
+            }], plotLayout('Распределение train-классов', 'ID Категории', 'Количество записей'), {displaylogo: false, responsive: true});
+        } else {
+            renderEmptyChart('chart-classes', 'Распределение train-классов', 'Нет сохраненного распределения классов');
+        }
+
+        const top5 = safeArray(training.top5_validation_classes);
+        if (top5.length) {
+            Plotly.newPlot('chart-top5', [{
+                x: top5.map(item => item.class_id),
+                y: top5.map(item => item.count),
+                type: 'bar',
+                marker: {color: themeColor, opacity: 0.85},
+                customdata: top5.map(item => [item.label]),
+                hovertemplate: '<b>ID:</b> %{x}<br><b>Label:</b> %{customdata[0]}<br><b>Количество:</b> %{y}<extra></extra>'
+            }], plotLayout('Топ-5 validation-классов', 'ID Категории', 'Количество записей'), {displaylogo: false, responsive: true});
+        } else {
+            renderEmptyChart('chart-top5', 'Топ-5 validation-классов', 'Нет validation-статистики');
+        }
+
+        const previewRows = safeArray(testData?.preview_rows);
+        if (previewRows.length) {
+            Plotly.newPlot('chart-test-confidence', [{
+                x: previewRows.map(item => item.record_id),
+                y: previewRows.map(item => item.confidence),
+                type: 'scatter',
+                mode: 'markers',
+                marker: {
+                    color: previewRows.map(item => item.correct === true ? '#00E676' : (item.correct === false ? '#FF5252' : themeColor)),
+                    size: 10,
+                    opacity: 0.85
+                },
+                customdata: previewRows.map(item => [item.pred_class_id, item.pred_label, item.true_class_id ?? '-', item.true_label ?? '-', item.correct ?? '-']),
+                hovertemplate: '<b>Запись:</b> %{x}<br><b>Confidence:</b> %{y:.4f}<br><b>Pred ID:</b> %{customdata[0]}<br><b>Pred Label:</b> %{customdata[1]}<br><b>True ID:</b> %{customdata[2]}<br><b>True Label:</b> %{customdata[3]}<br><b>Correct:</b> %{customdata[4]}<extra></extra>'
+            }], plotLayout('Confidence по test-записям', 'Номер записи', 'Confidence'), {displaylogo: false, responsive: true});
+        } else {
+            renderEmptyChart('chart-test-confidence', 'Confidence по test-записям', 'После загрузки test.npz здесь появится график');
+        }
+    }
+
+    function renderLinks(payload) {
+        const plotLinks = document.getElementById('plot-links');
+        plotLinks.innerHTML = '';
+
+        const plots = payload.plots || {};
+        Object.entries(plots).forEach(([key, value]) => {
+            if (!value) return;
+            const link = document.createElement('a');
+            link.className = 'link-chip';
+            link.href = `/plots/${value}`;
+            link.target = '_blank';
+            link.rel = 'noopener noreferrer';
+            link.textContent = key;
+            plotLinks.appendChild(link);
+        });
+
+        if (!plotLinks.children.length) {
+            plotLinks.innerHTML = '<span class="muted-text">HTML-графики появятся после обучения или после первого test-прогона.</span>';
+        }
+
+        const downloadLinks = document.getElementById('download-links');
+        downloadLinks.innerHTML = '';
+        const downloads = payload.downloads || {};
+        Object.entries(downloads).forEach(([key, value]) => {
+            if (!value) return;
+            const link = document.createElement('a');
+            link.className = 'link-chip';
+            link.href = `/downloads/${value}`;
+            link.textContent = key;
+            downloadLinks.appendChild(link);
+        });
+    }
+
+    function renderPredictionsTable(testData) {
+        const tbody = document.getElementById('predictions-table');
+        tbody.innerHTML = '';
+        const rows = safeArray(testData?.preview_rows);
+        if (!rows.length) {
+            tbody.innerHTML = '<tr><td colspan="7">После test-прогона здесь появятся первые предсказания.</td></tr>';
+            return;
+        }
+
+        rows.forEach(row => {
+            const tr = document.createElement('tr');
+            tr.innerHTML = `
+                <td>${row.record_id ?? '-'}</td>
+                <td>${row.pred_class_id ?? '-'}</td>
+                <td>${row.pred_label ?? '-'}</td>
+                <td>${metric(row.confidence)}</td>
+                <td>${row.true_class_id ?? '-'}</td>
+                <td>${row.true_label ?? '-'}</td>
+                <td>${row.correct === true ? '<span class="badge badge-ok">true</span>' : row.correct === false ? '<span class="badge badge-bad">false</span>' : '-'}</td>
+            `;
+            tbody.appendChild(tr);
+        });
+    }
+
+    function renderPayload(payload) {
+        const statusBox = document.getElementById('status-box');
+        const analyticsSection = document.getElementById('analytics-section');
+
+        if (!payload.ready) {
+            statusBox.innerHTML = `<div class="alert alert-error">${payload.error || 'Не удалось загрузить аналитику'}</div>`;
+            analyticsSection.classList.add('section-hidden');
+            return;
+        }
+
+        statusBox.innerHTML = `
+            <div class="alert alert-success">
+                Модель готова. Артефакты читаются из: <b>${payload.artifacts_dir}</b>
+            </div>
+        `;
+        analyticsSection.classList.remove('section-hidden');
+
+        document.getElementById('model-classes').innerText = payload.model?.num_classes ?? '-';
+        document.getElementById('val-acc').innerText = metric(payload.model?.validation_accuracy);
+        document.getElementById('val-loss').innerText = metric(payload.model?.validation_loss);
+        document.getElementById('test-acc').innerText = metric(payload.test?.final_accuracy);
+        document.getElementById('test-loss').innerText = metric(payload.test?.final_loss);
+        document.getElementById('test-count').innerText = payload.test?.num_samples ?? 0;
+
+        renderTrainingCharts(payload.training || {});
+        renderClassCharts(payload.training || {}, payload.test || null);
+        renderLinks(payload);
+        renderPredictionsTable(payload.test || null);
+    }
+
+    async function fetchAnalytics() {
+        const response = await fetch('/api/analytics');
+        const payload = await response.json();
+        renderPayload(payload);
+        return payload;
+    }
+
+    document.getElementById('uploadForm').addEventListener('submit', async function(e) {
+        e.preventDefault();
+        const box = document.getElementById('upload-message');
+        box.innerHTML = '<div class="alert alert-success">Файл загружается и проверяется...</div>';
+
+        const formData = new FormData(this);
+        const response = await fetch('/upload', {
+            method: 'POST',
+            body: formData
+        });
+        const payload = await response.json();
+
+        if (!response.ok || !payload.ok) {
+            box.innerHTML = `<div class="alert alert-error">${payload.error || 'Не удалось обработать файл'}</div>`;
+            return;
+        }
+
+        box.innerHTML = `<div class="alert alert-success">${payload.message}. Samples: <b>${payload.result.num_samples}</b></div>`;
+        await fetchAnalytics();
+    });
+
+    fetchAnalytics();
+</script>
+{% endblock %}
